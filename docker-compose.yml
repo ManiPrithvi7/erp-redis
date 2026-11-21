@@ -1,0 +1,29 @@
+# Local run of the exact image Render builds. The app repo's docker-compose.yml starts this
+# same build as part of the parity stack; this file is for working on Redis on its own.
+#
+#   docker compose up -d
+#   ./scripts/persist-check.sh            # marker in db1 + db2 -> restart -> assert
+#   ./scripts/x6-repro.sh                 # show the root-owned-disk failure and the fix
+services:
+  redis:
+    build:
+      context: .
+    image: proof-erpnext-redis:local
+    restart: unless-stopped
+    ports:
+      # Published only for local redis-cli; Render reaches this service on the private
+      # network at erpnext-redis-<hash>:10000 and never publishes a port.
+      - "${REDIS_LOCAL_PORT:-16379}:10000"
+    environment:
+      REDIS_PORT_NUMBER: "10000"
+      ALLOW_EMPTY_PASSWORD: "no"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-proof-redis-password}
+      REDIS_AOF_ENABLED: "yes"
+      REDIS_EXTRA_FLAGS: >-
+        --maxmemory ${REDIS_MAXMEMORY:-200mb}
+        --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-volatile-lru}
+    volumes:
+      - redis-data:/bitnami/redis/data
+
+volumes:
+  redis-data:

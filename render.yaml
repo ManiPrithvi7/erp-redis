@@ -1,0 +1,44 @@
+# Blueprint spec: https://render.com/docs/blueprint-spec
+#
+# This is ONE of three Blueprints (redis, db, app), each in its own repo. `fromService` only
+# resolves inside a single Blueprint, so the app pastes this service's internal hostname by
+# hand - see RENDER_DEPLOY.md.
+#
+# A private service gets a TCP-only health check and has no `ports:` field in the spec, so
+# Redis must own the primary port: REDIS_PORT_NUMBER=10000 (X9).
+#
+# The disk must exist on the FIRST deploy: adding it later mounts an empty volume over
+# /bitnami/redis/data, which is indistinguishable from having lost the queue.
+services:
+  - type: pserv
+    name: erpnext-redis
+    repo: https://github.com/ManiPrithvi7/erpnext-redis
+    branch: main
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    # One instance, non-negotiable: the queue is Redis-standalone and a second instance gets
+    # its own empty disk. Cache/queue separation happens by logical DB index, not by host.
+    numInstances: 1
+    maxShutdownDelaySeconds: 120
+    # Deliberately no healthCheckPath: Render probes TCP on the primary port for pserv, and a
+    # password-protected Redis answers TCP before AUTH, which is exactly what we want here.
+    autoDeployTrigger: off
+    disk:
+      name: erpnext-redis-data
+      mountPath: /bitnami/redis/data
+      sizeGB: 5
+    envVars:
+      - key: REDIS_PORT_NUMBER
+        value: "10000"
+      - key: ALLOW_EMPTY_PASSWORD
+        value: "no"
+      - key: REDIS_PASSWORD
+        sync: false
+      # The queue (db 2) is the only thing here that cannot be rebuilt, so it gets the AOF.
+      - key: REDIS_AOF_ENABLED
+        value: "yes"
+      # No env var exists for these two; run.sh appends them after the conf file and the last
+      # occurrence wins. volatile-lru = evict TTL'd cache keys, never the RQ job keys.
+      - key: REDIS_EXTRA_FLAGS
+        value: "--maxmemory 200mb --maxmemory-policy volatile-lru"
