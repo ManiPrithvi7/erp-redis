@@ -59,8 +59,8 @@ stock one dying on its own append-only file.
 
 | path | what it is |
 |---|---|
-| `Dockerfile` | the pinned digest, the `redis`→uid 1001 passwd entry, `USER root`, the two `REDIS_*` env defaults |
-| `docker/entrypoint.sh` | recursive `chown` of the mounted disk, then `exec "$@"` so Bitnami still drops to uid 1001 itself |
+| `Dockerfile` | the pinned digest, the `redis`→uid 1001 passwd entry, `USER root`, the `REDIS_*` env defaults, `EXPOSE 10000` |
+| `docker/entrypoint.sh` | recursive `chown` of the mounted disk, one line naming the port/auth/AOF it is about to boot with, then `exec "$@"` so Bitnami still drops to uid 1001 itself |
 | `render.yaml` | `pserv`, `starter`, 5 GB disk at `/bitnami/redis/data`, port 10000 |
 | `scripts/persist-check.sh` | does it actually persist |
 | `scripts/x6-repro.sh` | the root-owned-disk trap, reproduced for $0 |

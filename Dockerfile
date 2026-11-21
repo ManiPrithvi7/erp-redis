@@ -33,16 +33,31 @@ COPY docker/entrypoint.sh /opt/render/entrypoint.sh
 RUN chmod 0755 /opt/render/entrypoint.sh
 
 # Everything Redis needs is re-rendered into /opt/bitnami/redis/etc/redis.conf on every boot
-# from Bitnami's env vars, so nothing has to be baked - and baking a redis.conf would be
-# actively wrong here: libredis.sh skips redis_override_conf() when a mounted conf is present,
-# which would silently disable REDIS_AOF_ENABLED and REDIS_PORT_NUMBER.
+# from Bitnami's env vars, so no conf file is baked - and baking one would be actively wrong
+# here: libredis.sh skips redis_override_conf() when a mounted conf is present, which would
+# silently disable REDIS_AOF_ENABLED and REDIS_PORT_NUMBER.
 #
-# maxmemory / maxmemory-policy are the two settings with NO Bitnami env var; run.sh appends
-# REDIS_EXTRA_FLAGS after the conf path and Redis lets the last occurrence win. volatile-lru is
-# what makes one instance safe for both cache and queue: it can evict the TTL'd cache keys in
-# db 1 while the non-expiring RQ job keys in db 2 stay put (X15).
-ENV REDIS_AOF_ENABLED=yes \
+# The three ENVs below are still baked, deliberately, because each one is a contract with the
+# app service rather than a preference:
+#
+#   REDIS_PORT_NUMBER - the app's REDIS_URL names 10000 for every service in this stack. The
+#     first Render deploy of this repo came up on Bitnami's default 6379, because the service
+#     was created in the dashboard instead of from render.yaml and none of its envVars existed.
+#     A Redis listening on a port nothing dials fails silently; a Redis listening on the port
+#     the image always promised cannot. Measured, X9 in the app repo's LIMITATIONS.md.
+#   REDIS_AOF_ENABLED - without it the queue is not durable across a restart, which is the only
+#     reason this service has a disk.
+#   REDIS_EXTRA_FLAGS - maxmemory / maxmemory-policy have NO Bitnami env var, so run.sh appends
+#     these after the conf path and Redis lets the last occurrence win. volatile-lru is what
+#     makes one instance safe for both cache and queue: it evicts the TTL'd cache keys in db 1
+#     while the non-expiring RQ job keys in db 2 stay put (X15).
+ENV REDIS_PORT_NUMBER=10000 \
+    REDIS_AOF_ENABLED=yes \
     REDIS_EXTRA_FLAGS="--maxmemory 200mb --maxmemory-policy volatile-lru"
+
+# Render reads the primary port from EXPOSE for the docker runtime, and the base image exposes
+# 6379 - which would advertise a port this image no longer listens on.
+EXPOSE 10000
 
 ENTRYPOINT ["/opt/render/entrypoint.sh"]
 CMD ["/opt/bitnami/scripts/redis/entrypoint.sh", "/opt/bitnami/scripts/redis/run.sh"]

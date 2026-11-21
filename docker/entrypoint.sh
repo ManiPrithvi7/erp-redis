@@ -37,4 +37,20 @@ else
   log "running as uid $(id -u); $DATA_DIR is writable"
 fi
 
+# Say out loud what this process is about to be. Every value on this line has been wrong at
+# least once in a service created from the dashboard instead of from render.yaml, and each one
+# fails quietly: a Redis on 6379 while the app dials 10000 is an unreachable queue behind a
+# green deploy (X9), and an instance with no requirepass is open to every service in the
+# Render project, not just ours.
+port="${REDIS_PORT_NUMBER:-6379}"
+if [[ "${ALLOW_EMPTY_PASSWORD:-no}" == "yes" ]]; then
+  auth="NONE (ALLOW_EMPTY_PASSWORD=yes) - any service in this project can read the queue"
+else
+  auth="requirepass"
+fi
+log "tcp/RESP on :$port  auth=$auth  aof=${REDIS_AOF_ENABLED:-no}  ${REDIS_EXTRA_FLAGS:-<no maxmemory policy>}"
+if [[ "$port" != "10000" ]]; then
+  log "WARN: every REDIS_URL in this stack names 10000. On $port the app cannot reach the queue."
+fi
+
 exec "$@"

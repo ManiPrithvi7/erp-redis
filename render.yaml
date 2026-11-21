@@ -12,7 +12,7 @@
 services:
   - type: pserv
     name: erpnext-redis
-    repo: https://github.com/ManiPrithvi7/erpnext-redis
+    repo: https://github.com/ManiPrithvi7/erp-redis
     branch: main
     runtime: docker
     dockerfilePath: ./Dockerfile
@@ -21,8 +21,11 @@ services:
     # its own empty disk. Cache/queue separation happens by logical DB index, not by host.
     numInstances: 1
     maxShutdownDelaySeconds: 120
-    # Deliberately no healthCheckPath: Render probes TCP on the primary port for pserv, and a
-    # password-protected Redis answers TCP before AUTH, which is exactly what we want here.
+    # Deliberately no healthCheckPath, and type pserv rather than web: a *web* service gets an
+    # HTTP port-scan from inside the instance once a minute until it times out, which a RESP
+    # server answers by dropping the connection and logging "Possible SECURITY ATTACK detected
+    # ... sending POST or Host: commands" (X9). A pserv TCP-probes the primary port and sends
+    # no bytes, and a password-protected Redis answers TCP before AUTH - exactly enough.
     autoDeployTrigger: off
     disk:
       name: erpnext-redis-data

@@ -19,15 +19,51 @@ hostname, and neither can start cleanly without it.
 
 ## 2. Create the service
 
-Dashboard → New → **Blueprint** → connect `ManiPrithvi7/erpnext-redis`. The whole file is one
+Dashboard → New → **Blueprint** → connect `ManiPrithvi7/erp-redis`. The whole file is one
 service, so there is nothing to deselect. It will prompt for one secret:
 
 | variable | notes |
 |---|---|
 | `REDIS_PASSWORD` | goes into the URL the app service uses: `redis://default:<this>@<host>:10000` |
 
-Everything else (`REDIS_PORT_NUMBER=10000`, `ALLOW_EMPTY_PASSWORD=no`, `REDIS_AOF_ENABLED=yes`,
-`REDIS_EXTRA_FLAGS`) is already in `render.yaml` and does not need a dashboard value.
+`render.yaml` also sets `REDIS_PORT_NUMBER=10000`, `ALLOW_EMPTY_PASSWORD=no`,
+`REDIS_AOF_ENABLED=yes` and `REDIS_EXTRA_FLAGS`. The last three, plus the port, are **also baked
+into the Dockerfile** since the first deploy — so a service that skips the Blueprint still listens
+where the app expects and still has an AOF. `REDIS_PASSWORD` cannot be baked.
+
+Name the service `erpnext-redis`. Render derives the internal hostname from the *service* name, and
+a hand-created service is pre-filled with the repo name (`erp-redis-xxxx`), which is not what §3 and
+the app's `REDIS_URL` examples assume.
+
+### Private service — never a web service (X9, measured)
+
+This has to be a **Private Service** (`type: pserv`). The first deploy was hand-created as a **Web
+Service** and Redis spent five minutes being attacked by Render's own health scanner:
+
+```
+1:M 21 Nov 2026 10:49:48.654 * Running mode=standalone, port=6379.
+1:M 21 Nov 2026 10:49:52.550 # Possible SECURITY ATTACK detected. It looks like somebody is
+    sending POST or Host: commands to Redis ... Connection from 127.0.0.1:37978 aborted.
+==> No open HTTP ports detected on 0.0.0.0, continuing to scan...
+==> Port scan timeout reached, no open HTTP ports detected. If you don't need to receive public
+    HTTP traffic, create a private service instead.
+```
+
+A web service must answer HTTP, so Render sends a real HTTP request to every localhost port it
+finds, once a minute. RESP reads `Host: …` as an inline command, decides it is a cross-protocol
+scripting attempt, and drops the connection. `127.0.0.1` is the platform's in-instance scanner, not
+an attacker: nothing is written and nothing leaks, and Redis is right to refuse. But the deploy
+never goes healthy, and the same log proves the second half of the story — `port=6379` means none
+of the `render.yaml` env reached the service.
+
+**Render will not change a service's type afterwards.** You delete it and create a private one, and
+deleting it deletes its disk. On a queue with jobs in it that is a data-losing operation, so read
+the create screen: if it offers you a public URL or a *Health Check Path* field, you are building a
+web service and must go back.
+
+If you insist on hand-creating it: New → **Private Service** → Docker runtime → this repo, plan
+`starter`, disk 5 GB at `/bitnami/redis/data`, and add all five env vars in §2 yourself, because
+none of them come from `render.yaml` when you bypass the Blueprint.
 
 ### Why port 10000 and not 6379 (X9)
 
@@ -38,6 +74,10 @@ Bitnami's `REDIS_PORT_NUMBER` is simply set to match. The corollary: no HTTP hea
 `/health` endpoint, and no path-based probe — TCP connect succeeding is the whole signal, which
 is the right amount of information for an AUTH-protected Redis (it answers TCP before you
 authenticate).
+
+It is therefore an `ENV` in the Dockerfile as well as an envVar in the Blueprint — the first deploy
+came up `Running mode=standalone, port=6379`, because a hand-created service inherits nothing from
+`render.yaml`, and a Redis on a port no one dials is an unreachable queue behind a green deploy.
 
 ### Why the eviction policy is an env var and not a conf file
 
@@ -78,6 +118,21 @@ print(r.execute_command("INFO", "persistence")["aof_enabled"])
 ```
 
 Expected: `maxmemory-policy = volatile-lru`, `appendonly = yes`, `aof_enabled = 1`.
+
+From the **redis** service's own Shell tab, without needing any credentials, which is the faster way
+to settle the two things a hand-created service gets wrong:
+
+```bash
+redis-cli -p 10000 PING
+# Connection refused      -> REDIS_PORT_NUMBER did not apply; it is on 6379 and nothing dials it.
+# NOAUTH Authentication required.  -> right port, and requirepass is set. Keep going.
+# PONG                    -> right port and NO PASSWORD. Any service in the project can read the
+#                            queue. Set REDIS_PASSWORD and restart.
+redis-cli -p 10000 -a "$REDIS_PASSWORD" --no-auth-warning CONFIG GET maxmemory-policy
+redis-cli -p 10000 -a "$REDIS_PASSWORD" --no-auth-warning CONFIG GET appendonly
+```
+
+`redis-cli` here is `/opt/bitnami/redis/bin/redis-cli`, already on `PATH` in this image.
 
 Locally, `./scripts/persist-check.sh` asserts the same things plus the two that matter most —
 that a marker in db 2 survives both a planned `restart` and a `kill -9`, and that the AOF
